@@ -16,35 +16,41 @@ int icmp(const void *a, const void *b)
     return 0; // For ascending order
 }
 
-void median_filter(const WFDB_Time *x, int32_t *output, int32_t n)
-{
-    WFDB_Time window[K];
+/**
+ * Initialize the median filter state
+ */
+void median_filter_init(median_filter_t *filt) {
+    if (!filt) return;
+    memset(filt->window, 0, sizeof(filt->window));
+    memset(filt->sorted, 0, sizeof(filt->sorted));
+    filt->index = 0;
+    filt->count = 0;
+}
 
-    for (int i = 0; i < n; i++)
-    {
-        // Fill the window with extended boundaries
-        for (int j = 0; j < K; j++)
-        {
-            int idx = i + j - K2;
+/**
+ * Update the median filter with a new sample and return the new median.
+ * @param filt: Pointer to the filter state structure
+ * @param new_sample: The current input sample
+ * @return: The new median value
+ */
+int32_t median_filter_update(median_filter_t *filt, WFDB_Time new_sample) {
+    if (!filt) return 0;
 
-            if (idx < 0)
-            {
-                window[j] = x[0]; // Extend with first element
-            }
-            else if (idx >= n)
-            {
-                window[j] = x[n - 1]; // Extend with last element
-            }
-            else
-            {
-                window[j] = x[idx];
-            }
-        }
+    // Add the new sample to the circular window buffer
+    filt->window[filt->index] = new_sample;
+    filt->index = (filt->index + 1) % MEDIAN_FILTER_SIZE;
 
-        // Sort the window
-        qsort(window, K, sizeof(WFDB_Time), icmp);
-
-        // Assign the median to output
-        output[i] = window[K2];
+    // Keep track of how many samples we have until the window is full
+    if (filt->count < MEDIAN_FILTER_SIZE) {
+        filt->count++;
     }
+
+    // To find the median, we work on a sorted copy of the window.
+    // This is more efficient than complex insertion/deletion algorithms for small N.
+    memcpy(filt->sorted, filt->window, sizeof(filt->window));
+    qsort(filt->sorted, filt->count, sizeof(WFDB_Time), icmp);
+
+    // The median is the middle element of the sorted array.
+    // If the window is not yet full, we take the middle of the current samples.
+    return filt->sorted[filt->count / 2];
 }

@@ -2,85 +2,61 @@
 #include <string.h>
 
 /**
- * High reference filter implementation: y[n] = (y[n-1] * 2) - y[n-2] + x[n] - x[n-32] - x[n-64] - x[n-96] with 47-sample output delay
- * @param input: Input signal array
- * @param output: Output signal array  
- * @param length: Signal length
+ * @brief Initializes the high-pass filter state.
+ *
+ * @param filt Pointer to the filter state structure.
  */
-void high_reference_filter(const int32_t *input, int32_t *output, int32_t length) {
-    if (!input || !output || length <= 0) {
-        fprintf(stderr, "high_reference_filter: Invalid input parameters\n");
-        return;
-    }
+void high_reference_filter_init(RCfilter_high_t *filt) {
+	if (!filt) {
+		return;
+	}
+	memset(filt->x, 0, sizeof(filt->x));
+	memset(filt->y, 0, sizeof(filt->y));
+	filt->index = 0;
+}
 
-    #define DELAY_32 32
-    #define DELAY_64 64
-    #define DELAY_96 96
-    #define HIGH_OUTPUT_DELAY 47
+/**
+ * @brief Updates the high-pass filter with a new input sample.
+ *
+ * Implements the filter equation:
+ * y[n] = 2*y[n-1] - y[n-2] + x[n] - x[n-32] - x[n-64] + x[n-96]
+ *
+ * @param filt Pointer to the filter state structure.
+ * @param input The new input sample, x[n].
+ * @return The calculated output sample, y[n].
+ */
+int32_t high_reference_filter_update(RCfilter_high_t *filt, int32_t input) {
+	if (!filt) {
+		return 0;
+	}
 
-    // Allocate temporary buffer for intermediate results
-    int32_t *temp_output;
-    SUALLOC(temp_output, length, sizeof(int32_t));
-    if (!temp_output) {
-        fprintf(stderr, "high_reference_filter: temp_output allocation failed\n");
-        return;
-    }
+	// Store the new input x[n] in the circular buffer, overwriting the oldest
+	// sample x[n-97]
+	filt->x[filt->index] = input;
 
-    // Protect against in-place use (input == output)
-    const int32_t *src = input;
-    int32_t *tmp = NULL;
-    if (input == temp_output) {
-        SUALLOC(tmp, length, sizeof(int32_t));
-        if (!tmp) {
-            fprintf(stderr, "high_reference_filter: temp allocation failed for in-place call\n");
-            SFREE(temp_output);
-            return;
-        }
-        // Copy input to tmp once
-        memcpy(tmp, input, (size_t)length * sizeof(int32_t));
-        src = tmp;
-    } else {
-        src = input;
-    }
+	// Retrieve historical input values from the circular buffer
+	// x[n] is the current 'input'
+	int32_t x_n_32 = filt->x[(filt->index + HIGH_REFERENCE_FILTER_ORDER - 32) %
+							 HIGH_REFERENCE_FILTER_ORDER];
+	int32_t x_n_64 = filt->x[(filt->index + HIGH_REFERENCE_FILTER_ORDER - 64) %
+							 HIGH_REFERENCE_FILTER_ORDER];
+	int32_t x_n_96 = filt->x[(filt->index + HIGH_REFERENCE_FILTER_ORDER - 96) %
+							 HIGH_REFERENCE_FILTER_ORDER];
 
-    int32_t n = 0;
+	// Retrieve historical output values
+	int32_t y_n_1 = filt->y[0]; // y[n-1]
+	int32_t y_n_2 = filt->y[1]; // y[n-2]
 
-    // Transient region with zero-padding (n < 96)
-    for (; n < length && n < DELAY_96; ++n) {
-        int32_t prev_y1 = (n > 0) ? temp_output[n-1] : 0;
-        int32_t prev_y2 = (n > 1) ? temp_output[n-2] : 0;
-        int32_t x_n32 = (n >= DELAY_32) ? src[n - DELAY_32] : 0;
-        int32_t x_n64 = (n >= DELAY_64) ? src[n - DELAY_64] : 0;
-        int32_t x_n96 = 0; // n < 96 here
-        temp_output[n] = (prev_y1 * 2) - prev_y2 + src[n] - x_n32 - x_n64 + x_n96;
-    }
+	// Calculate the new output y[n]
+	// y[n] = 2*y[n-1] - y[n-2] + x[n] - x[n-32] - x[n-64] + x[n-96]
+	int32_t y_n = (y_n_1 * 2) - y_n_2 + input - x_n_32 - x_n_64 + x_n_96;
 
-    // Steady-state region: no boundary checks needed (n >= 96)
-    for (; n < length; ++n) {
-        int32_t prev_y1 = temp_output[n-1];
-        int32_t prev_y2 = temp_output[n-2];
-        temp_output[n] = (prev_y1 * 2) - prev_y2
-                    + src[n] - src[n - DELAY_32] - src[n - DELAY_64] + src[n - DELAY_96];
-    }
-    
-    // Normalization using bit shift (divide by 2048)
-    for (WFDB_Time i = 0; i < length; ++i) {
-        temp_output[i] = temp_output[i] >> 11;
-    }
+	// Update the output history for the next iteration
+	filt->y[1] = filt->y[0]; // Old y[n-1] becomes new y[n-2]
+	filt->y[0] = y_n;		 // New y[n] becomes new y[n-1]
 
-    // Apply 47-sample output delay: shift the filtered result by 47 samples
-    for (uint32_t n = 0; n < length; n++) {
-        if (n < HIGH_OUTPUT_DELAY) {
-            // For the first 47 samples, use filtered values from the beginning
-            output[n] = temp_output[0];
-        } else {
-            // For samples >= 47, use filtered values from 47 samples earlier
-            output[n] = temp_output[n - HIGH_OUTPUT_DELAY];
-        }
-    }
+	// Advance the circular buffer index
+	filt->index = (filt->index + 1) % HIGH_REFERENCE_FILTER_ORDER;
 
-    if (tmp) {
-        SFREE(tmp);
-    }
-    SFREE(temp_output);
+	return (y_n / 2048);
 }

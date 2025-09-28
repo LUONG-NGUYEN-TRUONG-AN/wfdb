@@ -1,123 +1,86 @@
+// In shannon_entropy.c
 #include "shannon_entropy.h"
 #include <string.h>
+#include <stdlib.h>
 
 /**
- * Shannon entropy algorithm following the flowchart logic
- * Uses occurrence counting and proper Shannon entropy calculation
+ * Initializes the Shannon entropy calculator state on the heap.
+ * @return: Pointer to the allocated state, or NULL on failure.
  */
-
-void shannon_entropy_algorithm(const WFDB_Time *inputs, float *results, uint32_t input_len)
-{
-#define max_buffer 2458 // (9 * 256 + 9 * 16 + 9) - Maximum possible word value
-#define WINDOW_SIZE 127
-
-    if (!inputs || !results || input_len <= 0)
-    {
-        fprintf(stderr, "shannon_entropy_algorithm: Invalid input parameters\n");
-        return;
+shannon_entropy_state_t* shannon_entropy_init(void) {
+    shannon_entropy_state_t *state = malloc(sizeof(shannon_entropy_state_t));
+    if (!state) {
+        fprintf(stderr, "shannon_entropy_init: Failed to allocate state\n");
+        return NULL;
     }
 
-    if (input_len < WINDOW_SIZE)
-    {
-        fprintf(stderr, "shannon_entropy_algorithm: Input length (%d) less than window size (%d)\n",
-                input_len, WINDOW_SIZE);
-        return;
+    memset(state->freq, 0, sizeof(state->freq));
+    memset(state->window, 0, sizeof(state->window));
+    state->k = 0;
+    state->S = 0.0f;
+    state->pointer = 0;
+    state->count = 0;
+
+    return state;
+}
+
+/**
+ * Frees the state structure.
+ */
+void shannon_entropy_free(shannon_entropy_state_t *state) {
+    if (state) {
+        free(state);
+    }
+}
+
+/**
+ * Processes a single sample and updates the Shannon entropy.
+ * @param state: Pointer to the filter's state.
+ * @param input: The current input sample (a word value).
+ * @return: The calculated Shannon entropy for the current window.
+ */
+float shannon_entropy_update(shannon_entropy_state_t *state, WFDB_Time input) {
+    if (!state) {
+        return 0.0f;
     }
 
-    // --- Data Structures for the Algorithm ---
-    uint32_t freq[max_buffer];
-    memset(freq, 0, max_buffer * sizeof(uint32_t));
+    // Clamp input to valid range
+    uint32_t idx = (input < SHANNON_MAX_BUFFER) ? input : SHANNON_MAX_BUFFER - 1;
 
-    uint32_t window[WINDOW_SIZE];
-    memset(window, 0, WINDOW_SIZE * sizeof(uint32_t));
+    if (state->count < SHANNON_WINDOW_SIZE) {
+        // --- Initialization Phase (filling the first window) ---
+        state->window[state->pointer] = idx;
+        uint32_t te_in = state->freq[idx];
 
-    uint32_t k = 0;       // Cardinality (number of unique symbols)
-    float S = 0.0;        // Shannon entropy sum
-    uint32_t pointer = 0; // Circular buffer pointer
+        if (te_in == 0) state->k++;
+        state->freq[idx]++;
 
-    // --- Main Loop ---
-    for (uint32_t i = 0; i < input_len; ++i)
-    {
-        uint32_t idx = inputs[i];
+        state->S += ((float)PiMap[state->freq[idx]] - (float)PiMap[te_in]);
+        state->count++;
+    } else {
+        // --- Sliding Window Phase ---
+        uint32_t old_idx = state->window[state->pointer];
+        uint32_t te_in = state->freq[idx];
+        uint32_t te_out = state->freq[old_idx];
 
-        // Bounds checking for input samples
-        if (idx > max_buffer || idx < 0)
-        {
-            fprintf(stderr, "shannon_entropy_algorithm: input sample %d = %lld out of bounds at index %d, clamping to %d\n",
-                    idx, inputs[i], i, max_buffer - 1);
-            idx = max_buffer - 1; // Clamp to valid range
+        state->window[state->pointer] = idx;
+
+        if (state->freq[old_idx] > 0) state->freq[old_idx]--;
+        state->freq[idx]++;
+
+        state->S += (((float)PiMap[state->freq[idx]] - (float)PiMap[te_in]) +
+                     ((float)PiMap[state->freq[old_idx]] - (float)PiMap[te_out]));
+
+        if (te_in == 0) {
+            if (te_out > 1 || te_out == 0) state->k++;
+        } else {
+            if (state->freq[old_idx] == 0 && te_out == 1) state->k--;
         }
-
-        if (i < WINDOW_SIZE)
-        {
-            // --- Initialization Phase (First window) ---
-            window[pointer] = idx;
-            uint32_t te_in = freq[idx];
-
-            // Update cardinality if new symbol
-            if (te_in == 0)
-            {
-                k++;
-            }
-
-            // Update frequency count
-            freq[idx]++;
-
-            // Calculate entropy delta with bounds checking
-            float delta = ((float)PiMap[freq[idx]] - (float)PiMap[te_in]);
-            S = S + delta;
-
-            pointer = (pointer + 1) % WINDOW_SIZE;
-        }
-        else
-        {
-            // --- Sliding Window Phase ---
-            uint32_t old_idx = window[pointer];
-            uint32_t te_in = freq[idx];
-            uint32_t te_out = freq[old_idx];
-
-            // Bounds checking for old sample
-            if (old_idx >= max_buffer)
-            {
-                fprintf(stderr, "shannon_entropy_algorithm: old sample %d out of bounds, clamping to %d\n",
-                        old_idx, max_buffer - 1);
-                old_idx = max_buffer - 1;
-            }
-
-            // Update window
-            window[pointer] = idx;
-
-            // Update frequency counts
-            if (freq[old_idx] > 0)
-            {
-                freq[old_idx]--;
-            }
-            freq[idx]++;
-
-            // Calculate entropy delta with comprehensive bounds checking
-            float delta = (((float)PiMap[freq[idx]] - (float)PiMap[te_in]) + ((float)PiMap[freq[old_idx]] - (float)PiMap[te_out]));
-            S = S + delta;
-
-            // Update cardinality (k) following Python logic
-            if (te_in == 0)
-            {
-                if (te_out > 1 || te_out == 0)
-                {
-                    k++;
-                }
-            }
-            else
-            {
-                if (freq[old_idx] == 0 && te_out == 1)
-                {
-                    k--;
-                }
-            }
-            pointer = (pointer + 1) % WINDOW_SIZE;
-        }
-        // printf("k = %u, S = %.3f, pointer = %u\n", k, S, pointer);
-        // results[i] = (float)(k / 127.0) * (S / 1000000.0);
-        // results[i] = (double)(k / 127.0) * (S / 1000000.0);
-        results[i] = (float)((float)(k / 127.0) * (S / 1000000.0)); // Scale down to avoid overflow
     }
+
+    // Advance the circular buffer pointer
+    state->pointer = (state->pointer + 1) % SHANNON_WINDOW_SIZE;
+
+    // Calculate and return the final entropy value for this step
+    return (float)((float)(state->k) / SHANNON_WINDOW_SIZE) * (state->S / 1000000.0f);
 }

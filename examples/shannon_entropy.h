@@ -3,13 +3,30 @@
 
 #include "project.h"
 
-/**
- * Shannon entropy algorithm following the flowchart logic
- * Uses occurrence counting and proper Shannon entropy calculation
- * @param inputs: Input word sequence array
- * @param results: Output entropy values array
- * @param input_len: Length of input array
- */
-void shannon_entropy_algorithm(const WFDB_Time *inputs, float *results, uint32_t input_len);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define SHANNON_MAX_BUFFER 2458
+#define SHANNON_WINDOW_SIZE 127
+
+// State structure to hold all data needed for the algorithm
+typedef struct {
+    uint32_t freq[SHANNON_MAX_BUFFER];
+    uint32_t window[SHANNON_WINDOW_SIZE];
+    uint32_t k;       // Cardinality
+    float S;          // Shannon entropy sum
+    uint32_t pointer; // Circular buffer pointer
+    uint32_t count;   // Number of samples processed so far
+} shannon_entropy_state_t;
+
+shannon_entropy_state_t* shannon_entropy_init(void);
+float shannon_entropy_update(shannon_entropy_state_t *state, WFDB_Time input);
+void shannon_entropy_free(shannon_entropy_state_t *state);
+
+#ifdef __cplusplus
+}
+#endif
+
 
 #endif /* SHANNON_ENTROPY_H */

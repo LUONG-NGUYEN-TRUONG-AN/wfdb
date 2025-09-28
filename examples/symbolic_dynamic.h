@@ -3,17 +3,30 @@
 
 #include "project.h"
 
-/**
- * Symbolic dynamics implementation that converts signal differences into symbolic representation
- * @param x: Original RR interval signal
- * @param xl: Low-reference filtered signal
- * @param xh: High-reference filtered signal (used for thresholds)
- * @param sy: Output symbolic sequence array (0-9)
- * @param len: Signal length
- */
-void symbolic_dynamic(const WFDB_Time *x, const int32_t *xl, const int32_t *xh, uint8_t *sy, WFDB_Time len);
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-// Helper function to ensure the "gen" directory exists
-void ensure_gen_directory(void);
+#include "project.h" // For WFDB_Time
+
+#define SYMBOLIC_X_DELAY 63
+#define SYMBOLIC_XL_DELAY 47
+
+// State structure to hold the history for the filter
+typedef struct {
+    WFDB_Time x_buffer[SYMBOLIC_X_DELAY];   // Circular buffer for x samples
+    int32_t xl_buffer[SYMBOLIC_XL_DELAY]; // Circular buffer for xl samples
+    int x_index;
+    int xl_index;
+} symbolic_dynamic_state_t;
+
+void symbolic_dynamic_init(symbolic_dynamic_state_t *state);
+uint8_t symbolic_dynamic_update(symbolic_dynamic_state_t *state, WFDB_Time x, int32_t xl, int32_t xh);
+
+
+#ifdef __cplusplus
+}
+#endif
+
 
 #endif /* SYMBOLIC_DYNAMIC_H */
