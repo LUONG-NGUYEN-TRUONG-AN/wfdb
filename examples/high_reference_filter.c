@@ -4,59 +4,88 @@
 /**
  * @brief Initializes the high-pass filter state.
  *
+ * Ultra-optimized version using cascaded buffers with single index.
+ *
  * @param filt Pointer to the filter state structure.
  */
-void high_reference_filter_init(RCfilter_high_t *filt) {
-	if (!filt) {
+void high_reference_filter_init(RCfilter_high_t *filt)
+{
+	if (!filt)
+	{
 		return;
 	}
-	memset(filt->x, 0, sizeof(filt->x));
+	memset(filt->buffer_32, 0, sizeof(filt->buffer_32));
+	memset(filt->buffer_64, 0, sizeof(filt->buffer_64));
+	memset(filt->buffer_96, 0, sizeof(filt->buffer_96));
 	memset(filt->y, 0, sizeof(filt->y));
-	filt->index = 0;
+	filt->idx = 0;
 }
 
 /**
  * @brief Updates the high-pass filter with a new input sample.
  *
- * Implements the filter equation:
+ * Ultra-optimized cascaded buffer implementation with single synchronized index.
+ *
+ * Memory: 96 uint32_t (384 bytes) vs original 97 uint32_t (388 bytes) = 4 bytes saved
+ * Performance: Single index update, better cache locality, fewer modulo operations
+ *
+ * Filter equation:
  * y[n] = 2*y[n-1] - y[n-2] + x[n] - x[n-32] - x[n-64] + x[n-96]
+ *
+ * Cascade strategy:
+ * - buffer_32: Holds x[n-1] to x[n-32]
+ * - buffer_64: Holds x[n-33] to x[n-64]
+ * - buffer_96: Holds x[n-65] to x[n-96]
+ *
+ * Data flows: input → buffer_32[idx] → buffer_64[idx] → buffer_96[idx]
  *
  * @param filt Pointer to the filter state structure.
  * @param input The new input sample, x[n].
  * @return The calculated output sample, y[n].
  */
-int32_t high_reference_filter_update(RCfilter_high_t *filt, int32_t input) {
-	if (!filt) {
+uint16_t high_reference_filter_update(RCfilter_high_t *filt, uint16_t input)
+{
+	if (!filt)
+	{
 		return 0;
 	}
 
-	// Store the new input x[n] in the circular buffer, overwriting the oldest
-	// sample x[n-97]
-	filt->x[filt->index] = input;
+	// Read the values we need BEFORE they get overwritten
+	// x[n-32] is in buffer_32 at current index
+	uint32_t x_32 = filt->buffer_32[filt->idx];
 
-	// Retrieve historical input values from the circular buffer
-	// x[n] is the current 'input'
-	int32_t x_n_32 = filt->x[(filt->index + HIGH_REFERENCE_FILTER_ORDER - 32) %
-							 HIGH_REFERENCE_FILTER_ORDER];
-	int32_t x_n_64 = filt->x[(filt->index + HIGH_REFERENCE_FILTER_ORDER - 64) %
-							 HIGH_REFERENCE_FILTER_ORDER];
-	int32_t x_n_96 = filt->x[(filt->index + HIGH_REFERENCE_FILTER_ORDER - 96) %
-							 HIGH_REFERENCE_FILTER_ORDER];
+	// x[n-64] is in buffer_64 at current index
+	uint32_t x_64 = filt->buffer_64[filt->idx];
 
-	// Retrieve historical output values
-	int32_t y_n_1 = filt->y[0]; // y[n-1]
-	int32_t y_n_2 = filt->y[1]; // y[n-2]
+	// x[n-96] is in buffer_96 at current index
+	uint32_t x_96 = filt->buffer_96[filt->idx];
 
-	// Calculate the new output y[n]
-	// y[n] = 2*y[n-1] - y[n-2] + x[n] - x[n-32] - x[n-64] + x[n-96]
-	int32_t y_n = (y_n_1 * 2) - y_n_2 + input - x_n_32 - x_n_64 + x_n_96;
+	// Cascade the data through buffers (oldest gets overwritten)
+	// buffer_96 receives what was in buffer_64 (x[n-64] becomes x[n-96] after 32 more samples)
+	filt->buffer_96[filt->idx] = x_64;
 
-	// Update the output history for the next iteration
-	filt->y[1] = filt->y[0]; // Old y[n-1] becomes new y[n-2]
-	filt->y[0] = y_n;		 // New y[n] becomes new y[n-1]
+	// buffer_64 receives what was in buffer_32 (x[n-32] becomes x[n-64] after 32 more samples)
+	filt->buffer_64[filt->idx] = x_32;
 
-	// Advance the circular buffer index
-	filt->index = (filt->index + 1) % HIGH_REFERENCE_FILTER_ORDER;
+	// buffer_32 receives the new input (x[n] becomes x[n-32] after 32 samples)
+	filt->buffer_32[filt->idx] = input;
 
-	return (y_n / 2048);
+	// Retrieve output history
+	uint32_t y_1 = filt->y[0]; // y[n-1]
+	uint32_t y_2 = filt->y[1]; // y[n-2]
+
+	// Calculate new output: y[n] = 2*y[n-1] - y[n-2] + x[n] - x[n-32] - x[n-64] + x[n-96]
+	uint32_t current_output = (y_1 * 2) - y_2 + input - x_32 - x_64 + x_96;
+
+	// Update output history
+	filt->y[1] = filt->y[0];	 // Shift: y[n-1] → y[n-2]
+	filt->y[0] = current_output; // Store: y[n] → y[n-1]
+
+	// Advance synchronized circular buffer index (single update for all three buffers!)
+	filt->idx = (filt->idx + 1) % 32;
+
+	// Apply scaling factor
+	current_output = (current_output / 2048);
+
+	return (uint16_t)current_output;
 }
