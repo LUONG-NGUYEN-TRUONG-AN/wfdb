@@ -1,7 +1,10 @@
 #include "low_reference_filter.h"
+#include <string.h>
 
-void low_reference_filter_init(RCfilter_low_t *filt) {
-	if (!filt) {
+void low_reference_filter_init(RCfilter_low_t *filt)
+{
+	if (!filt)
+	{
 		return;
 	}
 	memset(filt->x, 0, sizeof(filt->x));
@@ -16,26 +19,28 @@ void low_reference_filter_init(RCfilter_low_t *filt) {
  * @param output: Output signal array
  * @param length: Signal length
  */
-int32_t low_reference_filter_update(RCfilter_low_t *filt, int32_t input) {
-	if (!filt) {
+uint16_t low_reference_filter_update(RCfilter_low_t *filt, uint16_t input)
+{
+	if (!filt)
+	{
 		return 0; // Or handle error appropriately
 	}
 
 	// Get the oldest input sample, x[n-16]
-	int32_t delayed_input = filt->x[filt->index];
+	uint16_t delayed_input = filt->x[filt->index];
 
 	// Store the new input sample x[n] in its place
 	filt->x[filt->index] = input;
 
 	// Calculate the new output: y[n] = y[n-1] + x[n] - x[n-16]
 	// Note: filt->output currently holds y[n-1]
-	int32_t current_output = filt->output + input - delayed_input;
+	uint16_t current_output = filt->output + input - delayed_input;
 
 	// Store the new output y[n] for the next iteration (it will become y[n-1])
 	filt->output = current_output;
 
 	// Move to the next position in the circular buffer
-	filt->index = (filt->index + 1) % LOW_REFERENCE_FILTER_ORDER;
+	filt->index = (uint8_t)((filt->index + 1) % LOW_REFERENCE_FILTER_ORDER);
 
 	// The original implementation had a scaling factor and an output delay.
 	// Applying them here:
