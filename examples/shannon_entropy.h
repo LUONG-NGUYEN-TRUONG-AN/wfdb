@@ -21,7 +21,7 @@ typedef struct {
 } shannon_entropy_state_t;
 
 shannon_entropy_state_t* shannon_entropy_init(void);
-float shannon_entropy_update(shannon_entropy_state_t *state, WFDB_Time input);
+float shannon_entropy_update(shannon_entropy_state_t *state, uint16_t input);
 void shannon_entropy_free(shannon_entropy_state_t *state);
 
 #ifdef __cplusplus
