@@ -1,60 +1,162 @@
-/*
- * median_filter.c
- *
- *  Created on: Oct 14, 2025
- *      Author: luong
- */
-
 #include "median_filter.h"
-#include <assert.h>
-#include <stdlib.h>
 #include <string.h>
 
-int icmp(const void *a, const void *b) {
-	uint16_t x = *(const uint16_t *)a;
-	uint16_t y = *(const uint16_t *)b;
-	if (x < y)
-		return -1;
-	if (x > y)
-		return 1;
-	return 0; // For ascending order
+static uint16_t binary_search_exact(const uint16_t a[], uint16_t n, uint16_t key)
+{
+	uint16_t low = 0;
+	uint16_t high = n;
+
+	while (low < high)
+	{
+		uint16_t mid = low + (high - low) / 2;
+
+		if (a[mid] < key)
+		{
+			low = mid + 1;
+		}
+		else if (a[mid] > key)
+		{
+			high = mid;
+		}
+		else
+		{
+			return mid; 
+		}
+	}
+	return n; 
 }
 
-/**
- * Initialize the median filter state
- */
-void median_filter_init(median_filter_t *filt) {
+static uint16_t lower_bound(const uint16_t a[], uint16_t n, uint16_t key)
+{
+	uint16_t low = 0;
+	uint16_t high = n;
+
+	while (low < high)
+	{
+		uint16_t mid = low + (high - low) / 2;
+
+		if (a[mid] < key)
+		{
+			low = mid + 1;
+		}
+		else
+		{
+			high = mid;
+		}
+	}
+	return low;
+}
+
+void median_filter_init(median_filter_t *filt)
+{
 	if (!filt)
 		return;
+
 	memset(filt->window, 0, sizeof(filt->window));
 	memset(filt->sorted, 0, sizeof(filt->sorted));
-	filt->index = 0;
+	filt->head = 0;
 	filt->count = 0;
 }
 
-/**
- * Update the median filter with a new sample and return the new median.
- * @param filt: Pointer to the filter state structure
- * @param new_sample: The current input sample
- * @return: The new median value
- */
-uint16_t median_filter_update(median_filter_t *filt, uint16_t new_sample) {
+void median_filter_reset(median_filter_t *filt)
+{
+	if (!filt)
+		return;
+
+	median_filter_init(filt);
+}
+
+uint16_t median_filter_get_count(const median_filter_t *filt)
+{
 	if (!filt)
 		return 0;
 
-	// Add the new sample to the circular window buffer
-	filt->window[filt->index] = new_sample;
-	filt->index = (filt->index + 1) % MEDIAN_FILTER_SIZE;
+	return filt->count;
+}
 
-	// Keep track of how many samples we have until the window is full
-	if (filt->count < MEDIAN_FILTER_SIZE) {
+uint16_t median_filter_get_median(const median_filter_t *filt)
+{
+	if (!filt)
+		return 0;
+
+	if (filt->count == 0)
+		return 0;
+
+	return filt->sorted[filt->count / 2];
+}
+
+uint16_t median_filter_update(median_filter_t *filt, uint16_t new_sample)
+{
+	if (!filt)
+		return 0;
+
+	if (filt->count < MEDIAN_FILTER_SIZE)
+	{
+		filt->window[filt->head] = new_sample;
+
+		uint16_t t = lower_bound(filt->sorted, filt->count, new_sample);
+
+		for (uint16_t r = filt->count; r > t; r--)
+		{
+			filt->sorted[r] = filt->sorted[r - 1];
+		}
+
+		filt->sorted[t] = new_sample;
+
 		filt->count++;
+
+		if (++filt->head >= MEDIAN_FILTER_SIZE)
+		{
+			filt->head = 0;
+		}
+
+		return filt->sorted[filt->count / 2];
 	}
 
-	// To find the median, we work on a sorted copy of the window.
-	memcpy(filt->sorted, filt->window, sizeof(filt->window));
-	qsort(filt->sorted, filt->count, sizeof(uint16_t), icmp);
+	uint16_t old_sample = filt->window[filt->head];
 
-	// Return the middle element of the sorted array
-	return filt->sorted[filt->count / 2];
+	if (new_sample == old_sample)
+	{
+		filt->window[filt->head] = new_sample;
+
+		if (++filt->head >= MEDIAN_FILTER_SIZE)
+		{
+			filt->head = 0;
+		}
+
+		return filt->sorted[MEDIAN_FILTER_SIZE / 2];
+	}
+
+
+	uint16_t m = binary_search_exact(filt->sorted, MEDIAN_FILTER_SIZE, old_sample);
+
+	if (m >= MEDIAN_FILTER_SIZE)
+	{
+		return filt->sorted[MEDIAN_FILTER_SIZE / 2];
+	}
+
+	uint16_t last = MEDIAN_FILTER_SIZE - 1;
+	for (uint16_t r = m; r < last; r++)
+	{
+		filt->sorted[r] = filt->sorted[r + 1];
+	}
+
+	uint16_t t = lower_bound(filt->sorted, last, new_sample);
+
+	for (uint16_t r = last; r > t; r--)
+	{
+		filt->sorted[r] = filt->sorted[r - 1];
+	}
+
+
+	filt->sorted[t] = new_sample;
+
+
+	filt->window[filt->head] = new_sample;
+
+	if (++filt->head >= MEDIAN_FILTER_SIZE)
+	{
+		filt->head = 0;
+	}
+	return filt->sorted[MEDIAN_FILTER_SIZE / 2];
 }
