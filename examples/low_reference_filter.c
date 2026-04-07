@@ -3,55 +3,44 @@
 
 void low_reference_filter_init(RCfilter_low_t *filt)
 {
-	if (!filt)
-	{
-		return;
-	}
-	memset(filt->x, 0, sizeof(filt->x));
-	filt->output = 0;
-	filt->index = 0;
+    if (!filt) return;
+    memset(filt->x, 0, sizeof(filt->x));
+    filt->acc   = 0;
+    filt->index = 0;
 }
 
 /**
- * Low reference filter implementation: y[n] = y[n-1] + x[n] - x[n-16] with
- * 8-sample output delay
- * @param input: Input signal array
- * @param output: Output signal array
- * @param length: Signal length
+ * Low-pass reference filter: 16-tap moving average (CIC order-1, N=16)
+ *
+ * Difference equation:
+ *   acc[n] = acc[n-1] + x[n] - x[n-16]
+ *   y[n]   = acc[n] >> 4          (divide by 16 = unity pass-band gain)
+ *
+ * Key fixes vs. previous version:
+ *  1. Accumulator is int32_t  — prevents uint16_t overflow/underflow wrapping.
+ *  2. acc stores the raw (×16) sum; only the RETURNED value is scaled.
+ *     The feedback path no longer mixes scaled and unscaled values.
+ *  3. Circular index uses bitmask (& 0x0F) instead of modulo — faster on
+ *     Xtensa LX7 / Cortex-M which lack a single-cycle divide.
+ *  4. Subtraction is done in signed 32-bit — no silent underflow.
+ *
+ * Group delay: 7.5 samples (N/2 - 0.5).
+ *
+ * @param filt   Pointer to filter state.
+ * @param input  New input sample x[n].
+ * @return       Gain-normalised output y[n].
  */
 uint16_t low_reference_filter_update(RCfilter_low_t *filt, uint16_t input)
 {
-	if (!filt)
-	{
-		return 0; // Or handle error appropriately
-	}
+    if (!filt) return 0;
 
-	// Get the oldest input sample, x[n-16]
-	uint16_t delayed_input = filt->x[filt->index];
+    uint16_t oldest = filt->x[filt->index];
 
-	// Store the new input sample x[n] in its place
-	filt->x[filt->index] = input;
+    filt->x[filt->index] = input;
 
-	// Calculate the new output: y[n] = y[n-1] + x[n] - x[n-16]
-	// Note: filt->output currently holds y[n-1]
-	uint16_t current_output = filt->output + input - delayed_input;
+    filt->index = (uint8_t)((filt->index + 1u) & LOW_REFERENCE_FILTER_MASK);
 
-	// Store the new output y[n] for the next iteration (it will become y[n-1])
-	filt->output = current_output;
+    filt->acc += (int32_t)input - (int32_t)oldest;
 
-	// Move to the next position in the circular buffer
-	filt->index = (uint8_t)((filt->index + 1) % LOW_REFERENCE_FILTER_ORDER);
-
-	// The original implementation had a scaling factor and an output delay.
-	// Applying them here:
-
-	// 1. Scaling (divide by 16)
-	current_output = current_output / 16;
-
-	// 2. Output delay of 8 samples is not practical for a single-sample
-	//    real-time function, as it would require another buffer.
-	//    This is likely a remnant from the array-based version and
-	//    should be handled by the calling function if needed.
-
-	return current_output;
+    return (uint16_t)(filt->acc >> LOW_REFERENCE_FILTER_SHIFT);
 }
